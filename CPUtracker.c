@@ -2,83 +2,26 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
-
-
-
-struct CPU_stats{
-   unsigned long user[5];
-   unsigned long nice[5];
-   unsigned long system[5];
-   unsigned long idle[5];
-   unsigned long iowait[5];
-   unsigned long irq[5];
-   unsigned long softirq[5];
-   unsigned long steal[5];
-   unsigned long guest[5];
-   unsigned long guest_nice[5];
-};
-
-struct Queue{
-   int front, rear, size;
-   unsigned capacity;
-   struct CPU_stats *cpu;
-};
-
-struct Queue* createQueue(unsigned capacity){
-   struct Queue* queue = (struct Queue*)malloc(sizeof(struct Queue));
-   queue->capacity = capacity;
-   queue->front = queue->size = 0;
-   queue->rear = capacity - 1;
-   queue->cpu = (struct CPU_stats*)malloc(
-      queue->capacity * sizeof(struct CPU_stats));
-   return queue;
-}
-
-int isFull(struct Queue* queue)
-{
-   return (queue->size == queue->capacity);
-}
-
-int isEmpty(struct Queue* queue)
-{
-   return (queue->size == 0);
-}
-
-void enqueue(struct Queue* queue, struct CPU_stats item)
-{
-   if (isFull(queue))
-      return;
-   queue->rear = (queue->rear + 1) % queue->capacity;
-   queue->cpu[queue->rear] = item;
-   queue->size = queue->size + 1;
-}
- 
-struct CPU_stats dequeue(struct Queue* queue)
-{
-   if (isEmpty(queue)){
-      struct CPU_stats dummy;
-      return dummy;
-   }
-   struct CPU_stats item = queue->cpu[queue->front];
-   queue->front = (queue->front + 1) % queue->capacity;
-   queue->size = queue->size - 1;
-   return item;
-}
- 
+#include "queue.h"
 
 // Global declarations
 struct Queue *queue;
+struct CPU_stats prev;
+float usage[10][5];
+unsigned int usage_front, usage_rear;
 
 void *Reader(){
    FILE *proc_stat;
    char cpu_num[255];
    int count; // cpu_counter
-   
-   proc_stat= fopen("/proc/stat", "r");
-   if(proc_stat != NULL){
-      for(int i = 0; i<1; ++i){
-         if(isFull(queue))
-            continue;
+   while(1){
+      if(isFull(queue)){
+         printf("\nqueue is full\n");
+         sleep(1);
+         continue;
+      }
+      proc_stat= fopen("/proc/stat", "r");
+      if(proc_stat != NULL){
          struct CPU_stats cpu;     
          for(count = 0; count<5; ++count){
       	    fscanf(proc_stat,"%s ", cpu_num);
@@ -89,37 +32,82 @@ void *Reader(){
          }
          enqueue(queue, cpu);
       }
+      fclose(proc_stat);
+      sleep(1);
    }
-   fclose(proc_stat);
 }
 
 void *Analyzer(){
-   for(int i = 0; i<1; ++i){
-      if(isEmpty(queue)) 
+   sleep(1);
+   prev = dequeue(queue);
+   while(1){
+      sleep(1);
+      if(isEmpty(queue)) {
+         printf("\nqueue is empty\n");
          continue;
+      }
+      if(usage[(usage_rear + 1) % 10][0] != 0){
+         printf("\narray is full\n");
+         continue;
+      }
       struct CPU_stats cpu = dequeue(queue);
       int count;
+      usage_rear = (usage_rear + 1) % 10;
       for(count = 0; count<5; ++count){
-   	 printf("%ld %ld %ld %ld %ld %ld %ld %ld %ld %ld \n",
-	    cpu.user[count],cpu.nice[count],cpu.system[count],cpu.idle[count],
-	    cpu.iowait[count],cpu.irq[count],cpu.softirq[count],
-	    cpu.steal[count],cpu.guest[count],cpu.guest_nice[count]);
+	 unsigned long PrevIdle = prev.idle[count] + prev.iowait[count];
+	 unsigned long Idle = cpu.idle[count] + cpu.iowait[count];
+	 unsigned long PrevNonIdle = prev.user[count] + prev.nice[count] + prev.system[count] + 
+	   prev.irq[count] + prev.softirq[count] + prev.steal[count];
+	 unsigned long NonIdle = cpu.user[count] + cpu.nice[count] + cpu.system[count] + 
+	   cpu.irq[count] + cpu.softirq[count] + cpu.steal[count];
+	 unsigned long  PrevTotal = PrevIdle + PrevNonIdle;
+	 unsigned long  Total = Idle + NonIdle;
+
+	 usage[usage_rear][count] = (float)(Total - PrevTotal - Idle + PrevIdle)/
+	    (float)(Total - PrevTotal)*100;
       }
+      prev = cpu;
    }
+}
+
+void *Printer(){
+   int count;
+   while(1){
+      sleep(1);
+      if(usage[usage_front][0] == 0){
+         printf("\narray is empty\n");
+         continue;
+      }
+      for(count = 0; count<5; ++count){
+         printf("cpu %d usage: %f %%\n", count, usage[usage_front][count]);
+         usage[usage_front][count] = 0;
+      }
+      printf("\n");
+      usage_front = (usage_front + 1) % 10;
+   }   
 }
 
 int main()
 {
-   queue = createQueue(20);
+   queue = createQueue(10);
+   for(int i = 0; i<10; ++i){
+      for(int j = 0; j<5; ++j){
+         usage[i][j] = 0;
+      }
+   }
+   usage_front = 0;
+   usage_rear = 9;
    
-   pthread_t reader_id;
-   pthread_t analyzer_id;
-   Reader();
-   Analyzer();
+   pthread_t reader_id, analyzer_id, printer_id;
    
-   /*pthread_create(&reader_id, NULL, Reader, NULL);
-   pthread_create(&analyzer_id, NULL, Analyzer, NULL);
+   pthread_create(&reader_id, NULL, Reader, (void *)reader_id);
+   pthread_create(&analyzer_id, NULL, Analyzer, (void *)analyzer_id);
+   pthread_create(&printer_id, NULL, Printer, (void *)printer_id);
+   pthread_join(reader_id, NULL);
+   pthread_join(analyzer_id, NULL);
+   pthread_join(printer_id, NULL);
 
-   pthread_exit(NULL);*/
+   pthread_exit(NULL);
+   free(queue);
    return 0;
 }
