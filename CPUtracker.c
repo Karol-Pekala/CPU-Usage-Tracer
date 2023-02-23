@@ -2,19 +2,29 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <string.h>
 #include "queue.h"
 
 // Global declarations
-struct Queue *queue;
-struct CPU_stats prev;
-float usage[10][5];
-unsigned int usage_front, usage_rear;
+static struct Queue *queue;	//Queue for data transfer from Reader to Analyzer.
+static CPU_stats prev;	//CPU stats from previous iteration, for calculating usage.
+static double usage[10][5];	//Queue for data transfer from Analyzer to Printer.
+static unsigned int usage_front;	
+static unsigned int usage_rear;
+static volatile sig_atomic_t terminate;
 
-void *Reader(){
+// SIGTERM action
+static void term(){
+    terminate = 1;
+}
+
+static void *Reader(){
    FILE *proc_stat;
    char cpu_num[255];
-   int count; // cpu_counter
-   while(1){
+   int count; 			// cpu_counter
+   
+   while(!terminate){
       if(isFull(queue)){
          printf("\nqueue is full\n");
          sleep(1);
@@ -22,7 +32,8 @@ void *Reader(){
       }
       proc_stat= fopen("/proc/stat", "r");
       if(proc_stat != NULL){
-         struct CPU_stats cpu;     
+         CPU_stats cpu = {{0,0,0,0,0},{0,0,0,0,0},{0,0,0,0,0},{0,0,0,0,0},{0,0,0,0,0},
+            {0,0,0,0,0},{0,0,0,0,0},{0,0,0,0,0},{0,0,0,0,0},{0,0,0,0,0}};   
          for(count = 0; count<5; ++count){
       	    fscanf(proc_stat,"%s ", cpu_num);
 	    fscanf(proc_stat,"%ld %ld %ld %ld %ld %ld %ld %ld %ld %ld ",
@@ -30,27 +41,29 @@ void *Reader(){
 	       &(cpu.iowait[count]),&(cpu.irq[count]),&(cpu.softirq[count]),
 	       &(cpu.steal[count]),&(cpu.guest[count]),&(cpu.guest_nice[count]));
          }
-         enqueue(queue, cpu);
+	 enqueue(queue, cpu);         
       }
       fclose(proc_stat);
       sleep(1);
    }
+   printf("\nReader quiting.\n");   
+   return NULL;
 }
 
-void *Analyzer(){
+static void *Analyzer(){
    sleep(1);
    prev = dequeue(queue);
-   while(1){
+   while(!terminate){
       sleep(1);
       if(isEmpty(queue)) {
          printf("\nqueue is empty\n");
          continue;
       }
-      if(usage[(usage_rear + 1) % 10][0] != 0){
+      if(usage[(usage_rear + 1) % 10][0] > 0){
          printf("\narray is full\n");
          continue;
       }
-      struct CPU_stats cpu = dequeue(queue);
+      CPU_stats cpu = dequeue(queue);
       int count;
       usage_rear = (usage_rear + 1) % 10;
       for(count = 0; count<5; ++count){
@@ -63,18 +76,21 @@ void *Analyzer(){
 	 unsigned long  PrevTotal = PrevIdle + PrevNonIdle;
 	 unsigned long  Total = Idle + NonIdle;
 
-	 usage[usage_rear][count] = (float)(Total - PrevTotal - Idle + PrevIdle)/
-	    (float)(Total - PrevTotal)*100;
+	 usage[usage_rear][count] = (double)(Total - PrevTotal - Idle + PrevIdle)/
+	    (double)(Total - PrevTotal)*100;
       }
       prev = cpu;
    }
+   printf("\nAnalyzer quiting.\n");   
+   return NULL; 
 }
 
-void *Printer(){
+static void *Printer(){
    int count;
-   while(1){
+   sleep(2);
+   while(!terminate){
       sleep(1);
-      if(usage[usage_front][0] == 0){
+      if(usage[usage_front][0] <= 0){
          printf("\narray is empty\n");
          continue;
       }
@@ -84,7 +100,9 @@ void *Printer(){
       }
       printf("\n");
       usage_front = (usage_front + 1) % 10;
-   }   
+   }
+   printf("\nPrinter quiting.\n");   
+   return NULL;
 }
 
 int main()
@@ -98,6 +116,12 @@ int main()
    usage_front = 0;
    usage_rear = 9;
    
+   terminate = 0;
+   struct sigaction action;
+   memset(&action, 0, sizeof(struct sigaction));
+   action.sa_handler = term;
+   sigaction(SIGTERM, &action, NULL);
+   
    pthread_t reader_id, analyzer_id, printer_id;
    
    pthread_create(&reader_id, NULL, Reader, (void *)reader_id);
@@ -107,7 +131,7 @@ int main()
    pthread_join(analyzer_id, NULL);
    pthread_join(printer_id, NULL);
 
-   pthread_exit(NULL);
+   //pthread_exit(NULL);
    free(queue);
    return 0;
 }
