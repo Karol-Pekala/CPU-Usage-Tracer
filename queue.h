@@ -4,7 +4,7 @@ struct CPU_stats{
    unsigned long system[5];
    unsigned long idle[5];
    unsigned long iowait[5];
-   unsigned long irq[5];;
+   unsigned long irq[5];
    unsigned long softirq[5];
    unsigned long steal[5];
    unsigned long guest[5];

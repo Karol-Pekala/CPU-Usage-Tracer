@@ -6,8 +6,7 @@ struct Queue* createQueue(unsigned capacity){
    queue->capacity = capacity; 
    queue->front = queue->size = 0;
    queue->rear = capacity - 1;
-   queue->cpu = (CPU_stats*)malloc(
-      queue->capacity * sizeof(CPU_stats));
+   queue->cpu = (CPU_stats*)malloc(queue->capacity * sizeof(CPU_stats));
    return queue;
 }
 
