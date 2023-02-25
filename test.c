@@ -13,18 +13,12 @@ int main()
    action.sa_handler = term;
    sigaction(SIGTERM, &action, NULL);
    
-   pthread_t reader_id, analyzer_id, printer_id, watchdog_id, logger_id;
+   pthread_t reader_id, logger_id;
    
    pthread_create(&reader_id, NULL, Reader, (void *)reader_id);
-   pthread_create(&analyzer_id, NULL, Analyzer, (void *)analyzer_id);
-   pthread_create(&printer_id, NULL, Printer, (void *)printer_id);
-   pthread_create(&watchdog_id, NULL, Watchdog, (void *)watchdog_id);
    pthread_create(&logger_id, NULL, Logger, (void *)logger_id);
    
    pthread_join(reader_id, NULL);
-   pthread_join(analyzer_id, NULL);
-   pthread_join(printer_id, NULL);
-   pthread_join(watchdog_id, NULL);
    pthread_join(logger_id, NULL);
 
    end();

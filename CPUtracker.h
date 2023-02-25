@@ -8,6 +8,8 @@ void *Printer();
 
 void *Watchdog();
 
+void *Logger();
+
 void setup(void);
 
 void end(void);

@@ -2,18 +2,21 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <signal.h>
-#include <string.h>
+#include <time.h>
 
 #include "queue.h"
+#include "string-queue.h"
 #include "CPUtracker.h"
 
 //Global declarations
 static struct Queue *queue;	//Queue for data transfer from Reader to Analyzer.
 static CPU_stats prev;		//CPU stats from previous iteration.
 static double usage[10][5];	//Queue for data transfer from Analyzer to Printer.
-static unsigned int usage_front;	
-static unsigned int usage_rear;
-static unsigned short is_working[3];
+static unsigned char usage_front;	
+static unsigned char usage_rear;
+static string_Queue log_queue;	//Queue for data transfer to Logger.
+static char is_working[5];	//Info for Watchdog about threads.
+static unsigned char sleep_time[5];//time to sleep between iteration of threads.
 static volatile sig_atomic_t terminate;
 
 
@@ -26,12 +29,11 @@ void *Reader(){
    FILE *proc_stat;
    char cpu_num[255];
    int count; 			// cpu_counter
-   
    while(!terminate){
       is_working[0] = 2;
+      sleep(sleep_time[0]);
       if(isFull(queue)){
-         printf("\nqueue is full\n");
-         sleep(1);
+         enqueueString(&log_queue, "Reader: data queue is full.");
          continue;
       }
       proc_stat= fopen("/proc/stat", "r");
@@ -48,9 +50,8 @@ void *Reader(){
 	 enqueue(queue, cpu);         
       }
       fclose(proc_stat);
-      sleep(1);
    }
-   printf("\nReader quiting.\n");   
+   enqueueString(&log_queue, "Reader quiting.");   
    return NULL;
 }
 
@@ -59,13 +60,13 @@ void *Analyzer(){
    prev = dequeue(queue);
    while(!terminate){
       is_working[1] = 2;
-      sleep(1);
+      sleep(sleep_time[1]);
       if(isEmpty(queue)) {
-         printf("\nqueue is empty\n");
+         enqueueString(&log_queue, "Analyzer: data queue is empty.");
          continue;
       }
       if(usage[(usage_rear + 1) % 10][0] > 0){
-         printf("\narray is full\n");
+         enqueueString(&log_queue, "Analyzer: usage queue is full.");
          continue;
       }
       CPU_stats cpu = dequeue(queue);
@@ -86,7 +87,7 @@ void *Analyzer(){
       }
       prev = cpu;
    }
-   printf("\nAnalyzer quiting.\n");   
+   enqueueString(&log_queue, "Analyzer quiting.");   
    return NULL; 
 }
 
@@ -95,10 +96,10 @@ void *Printer(){
    sleep(2);
    while(!terminate){
       is_working[2] = 2;
-      sleep(1);
+      sleep(sleep_time[2]);
       printf("\n");
       if(usage[usage_front][0] <= 0){
-         printf("array is empty\n");
+         enqueueString(&log_queue, "Printer: usage queue is empty.");
          continue;
       }
       for(count = 0; count<5; ++count){
@@ -107,7 +108,7 @@ void *Printer(){
       }
       usage_front = (usage_front + 1) % 10;
    }
-   printf("\nPrinter quiting.\n");   
+   enqueueString(&log_queue, "Printer quiting.");   
    return NULL;
 }
 
@@ -117,18 +118,43 @@ void *Watchdog(){
       for(i = 0; i<3; ++i){
          if(is_working[i] == 0){
             terminate = 1;
-            printf("\nERROR.\n");   
+            enqueueString(&log_queue, "Watchdog: following thread is not working:");  
+            char c=(char)i+'0'; 
+            enqueueString(&log_queue, &c);
          }
          --is_working[i];
       }
-      sleep(1);
+      sleep(sleep_time[3]);
    }
-   printf("\nWatchdog quitting.\n");   
+   enqueueString(&log_queue, "Watchdog quitting.");   
+   return NULL;
+}
+
+void *Logger(){
+   FILE *log = fopen("log", "w");
+   time_t start = time(NULL);
+   while(!terminate){
+      char *message = dequeueString(&log_queue);
+      if(message[0] != '\0'){
+         fprintf(log, "%lld: %s\n", (long long)(time(NULL)-start), message);
+      }
+      sleep(sleep_time[4]);
+   }
+   sleep(sleep_time[4]);
+   for(int i = 0; i<4; ++i){
+      char *message = dequeueString(&log_queue);
+      if(message[0] != '\0'){
+         fprintf(log, "%lld: %s\n", (long long)(time(NULL)-start), message);
+      }
+   }
+   fprintf(log, "%lld: Logger quitting.\n", (long long)(time(NULL)-start));
+   fclose(log); 
    return NULL;
 }
 
 void setup(void){
    queue = createQueue(10);
+   setupQueue(&log_queue);
    for(int i = 0; i<10; ++i){
       for(int j = 0; j<5; ++j){
          usage[i][j] = 0;
@@ -137,9 +163,11 @@ void setup(void){
    usage_front = 0;
    usage_rear = 9;
    terminate = 0;   
-   is_working[0] = 2;
-   is_working[1] = 2;
-   is_working[2] = 2;
+   for(int i = 0; i<5; ++i){
+      is_working[i] = 2;
+      sleep_time[i] = 1;
+   }
+   enqueueString(&log_queue, "Setup done.");
 }
 
 void end(void){
