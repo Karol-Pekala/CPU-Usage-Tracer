@@ -6,7 +6,8 @@
 
 int main()
 {
-   setup();
+   unsigned char time[5] = {1,1,1,1,1};
+   setup(time);
    
    struct sigaction action;
    memset(&action, 0, sizeof(struct sigaction));

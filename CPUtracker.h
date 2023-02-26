@@ -10,6 +10,10 @@ void *Watchdog();
 
 void *Logger();
 
-void setup(void);
+void get_CPU_number(void);
+
+unsigned get_broken_thread(void);
+
+void setup(unsigned char time[5]);
 
 void end(void);
